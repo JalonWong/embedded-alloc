@@ -12,3 +12,16 @@ mod tlsf;
 pub use llff::Heap as LlffHeap;
 #[cfg(feature = "tlsf")]
 pub use tlsf::Heap as TlsfHeap;
+
+/// Init a heap with a static memory region.
+#[macro_export]
+macro_rules! init {
+    ($heap:ident, $size:expr) => {
+        static mut HEAP_MEM: [core::mem::MaybeUninit<u8>; $size] =
+            [core::mem::MaybeUninit::uninit(); $size];
+        #[allow(static_mut_refs)]
+        unsafe {
+            $heap.init(&raw mut HEAP_MEM as usize, $size)
+        }
+    };
+}
