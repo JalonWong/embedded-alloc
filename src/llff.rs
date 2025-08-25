@@ -1,5 +1,5 @@
 use core::alloc::{GlobalAlloc, Layout};
-use core::cell::RefCell;
+use core::cell::{OnceCell, RefCell};
 use core::ptr::{self, NonNull};
 
 use critical_section::Mutex;
@@ -7,7 +7,7 @@ use linked_list_allocator::Heap as LLHeap;
 
 /// A linked list first fit heap.
 pub struct Heap {
-    heap: Mutex<RefCell<LLHeap>>,
+    heap: Mutex<RefCell<OnceCell<LLHeap>>>,
 }
 
 impl Heap {
@@ -17,7 +17,7 @@ impl Heap {
     /// [`init`](Self::init) method before using the allocator.
     pub const fn empty() -> Heap {
         Heap {
-            heap: Mutex::new(RefCell::new(LLHeap::empty())),
+            heap: Mutex::new(RefCell::new(OnceCell::new())),
         }
     }
 
@@ -46,29 +46,32 @@ impl Heap {
     /// - This function must be called exactly ONCE.
     /// - `size > 0`
     pub unsafe fn init(&self, start_addr: usize, size: usize) {
+        assert!(size > 0);
         critical_section::with(|cs| {
-            self.heap
-                .borrow(cs)
-                .borrow_mut()
-                .init(start_addr as *mut u8, size);
+            assert!(self
+                .heap
+                .borrow_ref_mut(cs)
+                .set(LLHeap::new(start_addr as *mut u8, size))
+                .is_ok());
         });
     }
 
     /// Returns an estimate of the amount of bytes in use.
     pub fn used(&self) -> usize {
-        critical_section::with(|cs| self.heap.borrow(cs).borrow_mut().used())
+        critical_section::with(|cs| self.heap.borrow_ref_mut(cs).get_mut().unwrap().used())
     }
 
     /// Returns an estimate of the amount of bytes available.
     pub fn free(&self) -> usize {
-        critical_section::with(|cs| self.heap.borrow(cs).borrow_mut().free())
+        critical_section::with(|cs| self.heap.borrow_ref_mut(cs).get_mut().unwrap().free())
     }
 
     fn alloc(&self, layout: Layout) -> Option<NonNull<u8>> {
         critical_section::with(|cs| {
             self.heap
-                .borrow(cs)
-                .borrow_mut()
+                .borrow_ref_mut(cs)
+                .get_mut()
+                .unwrap()
                 .allocate_first_fit(layout)
                 .ok()
         })
@@ -77,8 +80,9 @@ impl Heap {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         critical_section::with(|cs| {
             self.heap
-                .borrow(cs)
-                .borrow_mut()
+                .borrow_ref_mut(cs)
+                .get_mut()
+                .unwrap()
                 .deallocate(NonNull::new_unchecked(ptr), layout)
         });
     }

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - Added a `init` macro to make initialization easier.
+- Use `OnceCell` to prevent duplicate initialization.
 
 ## [v0.6.0] - 2024-09-01
 

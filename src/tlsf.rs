@@ -1,8 +1,7 @@
 use core::alloc::{GlobalAlloc, Layout};
-use core::cell::RefCell;
+use core::cell::{OnceCell, RefCell};
 use core::ptr::{self, NonNull};
 
-use const_default::ConstDefault;
 use critical_section::Mutex;
 use rlsf::Tlsf;
 
@@ -10,7 +9,7 @@ type TlsfHeap = Tlsf<'static, usize, usize, { usize::BITS as usize }, { usize::B
 
 /// A two-Level segregated fit heap.
 pub struct Heap {
-    heap: Mutex<RefCell<TlsfHeap>>,
+    heap: Mutex<RefCell<OnceCell<TlsfHeap>>>,
 }
 
 impl Heap {
@@ -20,7 +19,7 @@ impl Heap {
     /// [`init`](Self::init) method before using the allocator.
     pub const fn empty() -> Heap {
         Heap {
-            heap: Mutex::new(RefCell::new(ConstDefault::DEFAULT)),
+            heap: Mutex::new(RefCell::new(OnceCell::new())),
         }
     }
 
@@ -49,24 +48,34 @@ impl Heap {
     /// - This function must be called exactly ONCE.
     /// - `size > 0`
     pub unsafe fn init(&self, start_addr: usize, size: usize) {
+        assert!(size > 0);
         critical_section::with(|cs| {
             let block: &[u8] = core::slice::from_raw_parts(start_addr as *const u8, size);
+            self.heap.borrow_ref_mut(cs).set(TlsfHeap::new()).unwrap();
             self.heap
-                .borrow(cs)
-                .borrow_mut()
+                .borrow_ref_mut(cs)
+                .get_mut()
+                .unwrap()
                 .insert_free_block_ptr(block.into());
         });
     }
 
     fn alloc(&self, layout: Layout) -> Option<NonNull<u8>> {
-        critical_section::with(|cs| self.heap.borrow(cs).borrow_mut().allocate(layout))
+        critical_section::with(|cs| {
+            self.heap
+                .borrow_ref_mut(cs)
+                .get_mut()
+                .unwrap()
+                .allocate(layout)
+        })
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         critical_section::with(|cs| {
             self.heap
-                .borrow(cs)
-                .borrow_mut()
+                .borrow_ref_mut(cs)
+                .get_mut()
+                .unwrap()
                 .deallocate(NonNull::new_unchecked(ptr), layout.align())
         })
     }
